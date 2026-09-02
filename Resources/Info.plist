@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key><string>ru</string>
+  <key>CFBundleDisplayName</key><string>Notch Work</string>
+  <key>CFBundleExecutable</key><string>NotchWork</string>
+  <key>CFBundleIdentifier</key><string>app.notchwork.personal</string>
+  <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+  <key>CFBundleName</key><string>Notch Work</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>0.4.0</string>
+  <key>CFBundleVersion</key><string>4</string>
+  <key>LSMinimumSystemVersion</key><string>14.0</string>
+  <key>LSUIElement</key><true/>
+  <key>NSRemindersFullAccessUsageDescription</key>
+  <string>Notch Work создаёт быстрые задачи Capture и синхронизирует их выполнение с Apple Reminders.</string>
+  <key>NSCalendarsFullAccessUsageDescription</key>
+  <string>Notch Work показывает выбранные события Apple Calendar в компактной панели.</string>
+  <key>NSUserNotificationUsageDescription</key>
+  <string>Notch Work напоминает только о возвращении Waiting и выбранных сроках.</string>
+  <key>NSHumanReadableCopyright</key><string>Создано для личного использования</string>
+  <key>CFBundleURLTypes</key>
+  <array><dict>
+    <key>CFBundleURLName</key><string>Google Calendar OAuth</string>
+    <key>CFBundleURLSchemes</key><array><string>app.notchwork.personal</string></array>
+  </dict></array>
+</dict>
+</plist>

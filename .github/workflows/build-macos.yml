@@ -1,0 +1,34 @@
+name: Build macOS app
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Show toolchain
+        run: swift --version
+      - name: Run tests
+        run: swift test
+      - name: Build app and DMG
+        run: ./scripts/build-app.sh
+      - name: Verify bundle
+        run: |
+          codesign --verify --deep --strict --verbose=2 "dist/Notch Work.app"
+          test -s "dist/Notch-Work.dmg"
+      - name: Upload downloadable DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: Notch-Work-macOS
+          path: dist/Notch-Work.dmg
+          if-no-files-found: error
+          retention-days: 30
