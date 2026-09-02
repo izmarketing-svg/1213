@@ -2,6 +2,9 @@ name: Build macOS app
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches:
+      - main
   push:
     tags:
       - "v*"
@@ -14,7 +17,8 @@ jobs:
     runs-on: macos-14
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      # v5 runs on Node.js 24; v4 is deprecated on current hosted runners.
+      - uses: actions/checkout@v5
       - name: Show toolchain
         run: swift --version
       - name: Run tests
@@ -26,7 +30,8 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "dist/Notch Work.app"
           test -s "dist/Notch-Work.dmg"
       - name: Upload downloadable DMG
-        uses: actions/upload-artifact@v4
+        # v6 runs on Node.js 24; older majors still target Node.js 20.
+        uses: actions/upload-artifact@v6
         with:
           name: Notch-Work-macOS
           path: dist/Notch-Work.dmg
