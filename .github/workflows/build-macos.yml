@@ -1,0 +1,36 @@
+name: Build macOS app
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 20
+    steps:
+      # v5 runs on Node.js 24; v4 is deprecated on current hosted runners.
+      - uses: actions/checkout@v5
+      - name: Show toolchain
+        run: swift --version
+      - name: Run tests
+        run: swift test
+      - name: Build app and DMG
+        run: ./scripts/build-app.sh
+      - name: Verify bundle
+        run: |
+          codesign --verify --deep --strict --verbose=2 "dist/Notch Work.app"
+          test -s "dist/Notch-Work.dmg"
+      - name: Upload downloadable DMG
+        # v6 runs on Node.js 24; older majors still target Node.js 20.
+        uses: actions/upload-artifact@v6
+        with:
+          name: Notch-Work-macOS
+          path: dist/Notch-Work.dmg
+          if-no-files-found: error
+          retention-days: 30
