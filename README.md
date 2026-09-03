@@ -63,6 +63,22 @@ ad-hoc signature for personal use, and places an Applications shortcut in the
 DMG. For distribution, set `CODESIGN_IDENTITY` to a Developer ID identity and
 notarize the resulting app.
 
+### Opening the personal build
+
+The CI artifact is ad-hoc signed because no Apple Developer certificate is
+configured. In the DMG, double-click **Установить Notch Work.command** to copy
+the app to Applications, remove only its download quarantine attribute, verify
+the code signature, and launch it. Alternatively, after dragging the app to
+Applications, run:
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/Notch Work.app"
+open "/Applications/Notch Work.app"
+```
+
+This workaround is only for a build you produced from this repository. Public
+distribution without that step requires Developer ID signing and notarization.
+
 CI performs ad-hoc signing when Apple credentials are absent. For Developer ID
 notarization, configure repository Actions secrets `CODESIGN_IDENTITY`,
 `DEVELOPER_ID_P12_BASE64`, `DEVELOPER_ID_P12_PASSWORD`, `APPLE_ID`,
