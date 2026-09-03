@@ -1,9 +1,9 @@
 import Foundation
-import Testing
+import XCTest
 @testable import NotchWork
 
-struct WorkdayTransitionsTests {
-    @Test func startingAnotherTaskPausesThePreviousOne() throws {
+final class WorkdayTransitionsTests: XCTestCase {
+    func testStartingAnotherTaskPausesThePreviousOne() throws {
         let start = Date(timeIntervalSince1970: 1_000)
         let first = WorkTask(title: "First", status: .active, sessions: [WorkSession(startedAt: start)])
         let second = WorkTask(title: "Second", status: .next)
@@ -11,13 +11,13 @@ struct WorkdayTransitionsTests {
 
         try WorkdayTransitions.start(taskID: second.id, in: &tasks, at: start.addingTimeInterval(90))
 
-        #expect(tasks[0].status == .paused)
-        #expect(tasks[0].sessions[0].duration() == 90)
-        #expect(tasks[1].status == .active)
-        #expect(tasks[1].sessions.count == 1)
+        XCTAssertEqual(tasks[0].status, .paused)
+        XCTAssertEqual(tasks[0].sessions[0].duration(), 90)
+        XCTAssertEqual(tasks[1].status, .active)
+        XCTAssertEqual(tasks[1].sessions.count, 1)
     }
 
-    @Test func completingTaskClosesItsSession() throws {
+    func testCompletingTaskClosesItsSession() throws {
         let start = Date(timeIntervalSince1970: 2_000)
         let task = WorkTask(title: "Report", status: .active, sessions: [WorkSession(startedAt: start)])
         var tasks = [task]
@@ -25,96 +25,95 @@ struct WorkdayTransitionsTests {
 
         try WorkdayTransitions.complete(taskID: task.id, in: &tasks, at: finish)
 
-        #expect(tasks[0].status == .done)
-        #expect(tasks[0].completedAt == finish)
-        #expect(tasks[0].totalDuration() == 120)
+        XCTAssertEqual(tasks[0].status, .done)
+        XCTAssertEqual(tasks[0].completedAt, finish)
+        XCTAssertEqual(tasks[0].totalDuration(), 120)
     }
 
-    @Test func completedTaskCannotRestart() {
+    func testCompletedTaskCannotRestart() {
         let task = WorkTask(title: "Done", status: .done)
         var tasks = [task]
-        #expect(throws: WorkdayTransitionError.completedTask) {
-            try WorkdayTransitions.start(taskID: task.id, in: &tasks, at: .now)
+        XCTAssertThrowsError(try WorkdayTransitions.start(taskID: task.id, in: &tasks, at: .now)) { error in
+            XCTAssertEqual(error as? WorkdayTransitionError, .completedTask)
         }
     }
 }
 
-struct CaptureDateParserTests {
-    private let calendar = Calendar(identifier: .gregorian)
-    private let now = Date(timeIntervalSince1970: 1_788_307_200) // 2026-09-02 UTC
+final class CaptureDateParserTests: XCTestCase {
+    private var calendar: Calendar { Calendar(identifier: .gregorian) }
+    private let now = Date(timeIntervalSince1970: 1_788_307_200)
 
-    @Test func defaultsToTomorrow() throws {
-        let parsed = try #require(CaptureDateParser.parse("проверить отчёт", now: now, calendar: calendar))
-        #expect(parsed.title == "проверить отчёт")
-        #expect(parsed.usedExplicitDate == false)
-        #expect(calendar.dateComponents([.day], from: now, to: parsed.dueDate).day == 1)
+    func testDefaultsToTomorrow() throws {
+        let parsed = try XCTUnwrap(CaptureDateParser.parse("проверить отчёт", now: now, calendar: calendar))
+        XCTAssertEqual(parsed.title, "проверить отчёт")
+        XCTAssertFalse(parsed.usedExplicitDate)
+        XCTAssertEqual(calendar.dateComponents([.day], from: now, to: parsed.dueDate).day, 1)
     }
 
-    @Test func recognizesRelativeRussianDateAndRemovesItFromTitle() throws {
-        let parsed = try #require(CaptureDateParser.parse("отправить договор послезавтра", now: now, calendar: calendar))
-        #expect(parsed.title == "отправить договор")
-        #expect(parsed.usedExplicitDate)
-        #expect(calendar.dateComponents([.day], from: now, to: parsed.dueDate).day == 2)
+    func testRecognizesRelativeRussianDateAndRemovesItFromTitle() throws {
+        let parsed = try XCTUnwrap(CaptureDateParser.parse("отправить договор послезавтра", now: now, calendar: calendar))
+        XCTAssertEqual(parsed.title, "отправить договор")
+        XCTAssertTrue(parsed.usedExplicitDate)
+        XCTAssertEqual(calendar.dateComponents([.day], from: now, to: parsed.dueDate).day, 2)
     }
 
-    @Test func recognizesNumericDate() throws {
-        let parsed = try #require(CaptureDateParser.parse("написать клиенту 10.09.2026", now: now, calendar: calendar))
+    func testRecognizesNumericDate() throws {
+        let parsed = try XCTUnwrap(CaptureDateParser.parse("написать клиенту 10.09.2026", now: now, calendar: calendar))
         let components = calendar.dateComponents([.year, .month, .day], from: parsed.dueDate)
-        #expect(components.year == 2026)
-        #expect(components.month == 9)
-        #expect(components.day == 10)
+        XCTAssertEqual(components.year, 2026)
+        XCTAssertEqual(components.month, 9)
+        XCTAssertEqual(components.day, 10)
     }
 }
 
-struct DailyPlanningTests {
-    @Test func confirmedPlanMakesOnlyFirstThreeTasksNext() {
+final class DailyPlanningTests: XCTestCase {
+    func testConfirmedPlanMakesOnlyFirstThreeTasksNext() {
         let tasks = (0..<5).map { WorkTask(title: "Task \($0)", status: .planned, order: $0) }
         var mutable = tasks
         let plan = DailyPlan(date: .now, orderedTaskIDs: tasks.map(\.id), isConfirmed: true)
         DailyPlanning.applyConfirmedPlan(plan, to: &mutable)
-        #expect(mutable.filter { $0.status == .next }.count == 3)
-        #expect(mutable.prefix(3).map(\.status) == [.next, .next, .next])
+        XCTAssertEqual(mutable.filter { $0.status == .next }.count, 3)
+        XCTAssertEqual(mutable.prefix(3).map(\.status), [.next, .next, .next])
     }
 
-    @Test func waitingDueTomorrowBecomesAPlannableTaskWithoutDuplicates() {
+    func testWaitingDueTomorrowBecomesAPlannableTaskWithoutDuplicates() {
         let date = Date(timeIntervalSince1970: 1_788_393_600)
         let waiting = WaitingItem(title: "баннеры", person: "Дизайнер", returnDate: date)
         let first = DailyPlanning.tasksReturningFromWaiting(on: date, tasks: [], waiting: [waiting])
-        #expect(first.count == 1)
-        #expect(first.first?.title == "Проверить: баннеры")
+        XCTAssertEqual(first.count, 1)
+        XCTAssertEqual(first.first?.title, "Проверить: баннеры")
         let second = DailyPlanning.tasksReturningFromWaiting(on: date, tasks: first, waiting: [waiting])
-        #expect(second.isEmpty)
+        XCTAssertTrue(second.isEmpty)
     }
 }
 
-struct PersistenceMigrationTests {
-    @Test func decodesMVP01SnapshotWithoutNewCollections() throws {
+final class PersistenceMigrationTests: XCTestCase {
+    func testDecodesMVP01SnapshotWithoutNewCollections() throws {
         let data = Data(#"{"projects":[],"tasks":[],"currentProjectID":null}"#.utf8)
         let snapshot = try JSONDecoder().decode(WorkdaySnapshot.self, from: data)
-        #expect(snapshot.waitingItems.isEmpty)
-        #expect(snapshot.dailyPlans.isEmpty)
-        #expect(snapshot.workspaceResources.isEmpty)
-        #expect(snapshot.settings.captureDefaultOffsetDays == 1)
+        XCTAssertTrue(snapshot.waitingItems.isEmpty)
+        XCTAssertTrue(snapshot.dailyPlans.isEmpty)
+        XCTAssertTrue(snapshot.workspaceResources.isEmpty)
+        XCTAssertEqual(snapshot.settings.captureDefaultOffsetDays, 1)
     }
 
-    @Test func decodesTaskSavedBeforeReminderListTracking() throws {
+    func testDecodesTaskSavedBeforeReminderListTracking() throws {
         let id = UUID()
         let data = Data("{\"id\":\"\(id.uuidString)\",\"title\":\"Old task\",\"status\":\"inbox\",\"createdAt\":0,\"order\":0,\"sessions\":[]}".utf8)
-        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .secondsSince1970
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .secondsSince1970
         let task = try decoder.decode(WorkTask.self, from: data)
-        #expect(task.reminderListIdentifier == nil)
+        XCTAssertNil(task.reminderListIdentifier)
     }
 
-
-    @Test func preservesDisabledBackToWorkSetting() throws {
+    func testPreservesDisabledBackToWorkSetting() throws {
         var settings = UserSettings()
         settings.backToWorkMinutes = nil
         let decoded = try JSONDecoder().decode(UserSettings.self, from: JSONEncoder().encode(settings))
-        #expect(decoded.backToWorkMinutes == nil)
+        XCTAssertNil(decoded.backToWorkMinutes)
     }
 
-
-    @Test func preservesCalendarAndPanelConfiguration() throws {
+    func testPreservesCalendarAndPanelConfiguration() throws {
         var settings = UserSettings()
         settings.appleCalendarEnabled = true
         settings.selectedAppleCalendarIDs = ["work", "personal"]
@@ -125,24 +124,24 @@ struct PersistenceMigrationTests {
         settings.pomodoroBreakMinutes = 10
         settings.enabledBlocks.remove(.waiting)
         let decoded = try JSONDecoder().decode(UserSettings.self, from: JSONEncoder().encode(settings))
-        #expect(decoded.appleCalendarEnabled)
-        #expect(decoded.selectedAppleCalendarIDs == ["work", "personal"])
-        #expect(decoded.googleCalendarEnabled)
-        #expect(decoded.captureKey == "k")
-        #expect(decoded.pomodoroWorkMinutes == 50)
-        #expect(decoded.pomodoroBreakMinutes == 10)
-        #expect(decoded.enabledBlocks.contains(.waiting) == false)
-        #expect(decoded.enabledBlocks.contains(.now))
+        XCTAssertTrue(decoded.appleCalendarEnabled)
+        XCTAssertEqual(decoded.selectedAppleCalendarIDs, ["work", "personal"])
+        XCTAssertTrue(decoded.googleCalendarEnabled)
+        XCTAssertEqual(decoded.captureKey, "k")
+        XCTAssertEqual(decoded.pomodoroWorkMinutes, 50)
+        XCTAssertEqual(decoded.pomodoroBreakMinutes, 10)
+        XCTAssertFalse(decoded.enabledBlocks.contains(.waiting))
+        XCTAssertTrue(decoded.enabledBlocks.contains(.now))
     }
 }
 
-
-struct DailyDurationTests {
-    @Test func clipsSessionToRequestedCalendarDay() {
-        var calendar = Calendar(identifier: .gregorian); calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+final class DailyDurationTests: XCTestCase {
+    func testClipsSessionToRequestedCalendarDay() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
         let day = Date(timeIntervalSince1970: 1_788_307_200)
         let session = WorkSession(startedAt: day.addingTimeInterval(-3_600),
                                   finishedAt: day.addingTimeInterval(3_600))
-        #expect(session.duration(on: day, calendar: calendar) == 3_600)
+        XCTAssertEqual(session.duration(on: day, calendar: calendar), 3_600)
     }
 }
