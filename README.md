@@ -88,10 +88,11 @@ the temporary keychain.
 
 ### Downloadable GitHub build
 
-The repository includes a macOS GitHub Actions workflow. Open **Actions → Build
-macOS app → Run workflow**, wait for the build to finish, and download the
-`Notch-Work-macOS` artifact. The artifact contains `Notch-Work.dmg`. Builds use
-an ad-hoc signature for personal installation and are not Apple-notarized.
+Download the current universal build directly: **[Notch-Work.dmg](https://github.com/izmarketing-svg/1213/releases/download/latest/Notch-Work.dmg)**.
+GitHub Actions replaces this file after every successful build of `main`, so no
+Actions log or artifact archive is needed. Builds use an ad-hoc signature until
+the Apple signing secrets described above are configured; in that case use the
+installer included in the DMG.
 
 ## Architecture
 
