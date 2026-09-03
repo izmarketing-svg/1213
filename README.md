@@ -3,7 +3,7 @@
 Notch Work is a native macOS 14+ workday companion that keeps one current task
 and the next three tasks in a compact panel at the top of the display.
 
-This repository currently contains an **MVP 0.4 development build**:
+This repository currently contains an **MVP 0.5 development build**:
 
 - a notch-aware, borderless AppKit panel with compact and expanded states;
 - NOW controls with a single-session timer (start, pause, resume, complete);
@@ -24,6 +24,13 @@ This repository currently contains an **MVP 0.4 development build**:
   tokens stored in the macOS Keychain;
 - resizable, sectioned settings for behavior, panel blocks, integrations, and
   project workspaces.
+- end-of-day review, morning start action, editable tomorrow queue, NEXT drag
+  and drop, editable project names/icons, and custom Waiting return dates;
+- configurable Pomodoro cycles and a privacy-preserving focus equalizer that
+  visualizes the active session without recording system audio or microphone;
+- editable Command-Shift global shortcut keys, deadline/Back to Work
+  notifications, all selected Google calendars, and safe reconciliation when
+  an Apple Reminder is removed externally.
 
 ## Run
 
@@ -45,10 +52,23 @@ On a Mac with Xcode command-line tools installed:
 ./scripts/build-app.sh
 ```
 
+Для универсального DMG, работающего и на Apple Silicon, и на Intel:
+
+```bash
+NOTCHWORK_UNIVERSAL=1 ./scripts/build-app.sh
+```
+
 The script produces `dist/Notch Work.app` and `dist/Notch-Work.dmg`, applies an
 ad-hoc signature for personal use, and places an Applications shortcut in the
 DMG. For distribution, set `CODESIGN_IDENTITY` to a Developer ID identity and
 notarize the resulting app.
+
+CI performs ad-hoc signing when Apple credentials are absent. For Developer ID
+notarization, configure repository Actions secrets `CODESIGN_IDENTITY`,
+`DEVELOPER_ID_P12_BASE64`, `DEVELOPER_ID_P12_PASSWORD`, `APPLE_ID`,
+`APPLE_TEAM_ID`, and `APPLE_APP_PASSWORD`; the workflow imports the temporary
+certificate, submits the DMG with `notarytool`, staples the ticket, and removes
+the temporary keychain.
 
 ### Downloadable GitHub build
 

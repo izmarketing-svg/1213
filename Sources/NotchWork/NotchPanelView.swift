@@ -3,13 +3,18 @@ import AppKit
 import SwiftUI
 
 struct NotchPanelView: View {
-    enum Section: String, CaseIterable { case now = "NOW", calendar = "КАЛЕНДАРЬ", waiting = "WAITING", done = "DONE", tomorrow = "ЗАВТРА", clipboard = "БУФЕР" }
+    enum Section: String, CaseIterable { case now = "NOW", focus = "ФОКУС", calendar = "КАЛЕНДАРЬ", waiting = "WAITING", done = "DONE", tomorrow = "ЗАВТРА", clipboard = "БУФЕР" }
     @ObservedObject var store: WorkdayStore
     @State private var now = Date.now
     @State private var newProjectName = ""
     @State private var selectedSection: Section = .now
     @State private var waitingTitle = ""
     @State private var waitingPerson = ""
+    @State private var waitingDate = Calendar.current.date(byAdding: .day, value: 1, to: .now) ?? .now
+    @State private var calendarDraftID: String?
+    @State private var calendarTitle = ""
+    @State private var calendarStart = Date.now
+    @State private var calendarEnd = Date.now.addingTimeInterval(3600)
 
     var body: some View {
         VStack(spacing: 0) {
@@ -25,7 +30,7 @@ struct NotchPanelView: View {
         .background(Color.black)
         .clipShape(RoundedRectangle(cornerRadius: store.isExpanded ? 18 : 13, style: .continuous))
         .animation(.spring(response: 0.3, dampingFraction: 0.86), value: store.isExpanded)
-        .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { now = $0 }
+        .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { now = $0; store.updatePomodoro(now: $0) }
         .onChange(of: store.settings.enabledBlocks) { _, _ in
             if !availableSections.contains(selectedSection) { selectedSection = .now }
         }
@@ -74,9 +79,11 @@ struct NotchPanelView: View {
                     }.buttonStyle(.borderless)
                 }.padding(10).background(.white.opacity(0.09), in: RoundedRectangle(cornerRadius: 9))
             }
+            if store.isDayReviewPresented { dayReview }
 
             switch selectedSection {
             case .now: nowSection
+            case .focus: focusSection
             case .calendar: calendarSection
             case .waiting: waitingSection
             case .done: doneSection
@@ -100,7 +107,16 @@ struct NotchPanelView: View {
                     actionButton("checkmark", store.completeCurrent)
                 }
             } else {
-                Text("Выберите следующую задачу").foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 8) {
+                    sectionLabel("ДОБРОЕ УТРО · ПЛАН НА СЕГОДНЯ")
+                    Text("В плане: \(store.tasks.filter { $0.status == .next || ($0.plannedDate.map(Calendar.current.isDateInToday) == true) }.count) задач")
+                        .foregroundStyle(.secondary)
+                    if let first = store.nextTasks.first {
+                        Button("Начать первую: \(first.title)") { store.start(first) }.buttonStyle(.borderedProminent)
+                    } else {
+                        Text("Добавьте первую задачу в NEXT").foregroundStyle(.secondary)
+                    }
+                }
             }
 
             if store.settings.enabledBlocks.contains(.next) {
@@ -119,6 +135,12 @@ struct NotchPanelView: View {
                             Button { store.removeFromNext(task) } label: { Image(systemName: "xmark") }
                             Button { store.start(task) } label: { Image(systemName: "play.fill") }
                         }.font(.subheadline).buttonStyle(.plain)
+                            .draggable(task.id.uuidString)
+                            .dropDestination(for: String.self) { values, _ in
+                                guard let value = values.first, let sourceID = UUID(uuidString: value) else { return false }
+                                store.moveNext(from: sourceID, before: task.id)
+                                return true
+                            }
                     }
                 }
             }
@@ -173,6 +195,37 @@ struct NotchPanelView: View {
                 Button("Завтра") { addWaiting(days: 1) }
                 Button("Через 3 дня") { addWaiting(days: 3) }
             }.font(.caption)
+            HStack {
+                DatePicker("Вернуть", selection: $waitingDate, displayedComponents: .date)
+                    .labelsHidden()
+                Button("Выбрать дату") { addWaiting(date: waitingDate) }
+            }.font(.caption)
+        }
+    }
+
+    private var focusSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            if store.settings.enabledBlocks.contains(.pomodoro) {
+                sectionLabel(store.pomodoroIsBreak ? "ПЕРЕРЫВ" : "POMODORO")
+                HStack {
+                    Text(format(store.pomodoroRemaining(at: now))).font(.system(size: 32, weight: .semibold, design: .monospaced))
+                    Spacer()
+                    actionButton(store.pomodoroEndsAt == nil ? "play.fill" : "pause.fill") { store.togglePomodoro() }
+                    actionButton("arrow.counterclockwise", store.resetPomodoro)
+                }
+            }
+            if store.settings.enabledBlocks.contains(.equalizer) {
+                sectionLabel("FOCUS EQUALIZER")
+                HStack(alignment: .center, spacing: 5) {
+                    ForEach(0..<18, id: \.self) { index in
+                        let phase = now.timeIntervalSinceReferenceDate * 3 + Double(index) * 0.7
+                        Capsule().fill(store.activeTask == nil ? Color.gray : Color.green)
+                            .frame(width: 6, height: store.activeTask == nil ? 5 : 8 + abs(sin(phase)) * 34)
+                    }
+                }.frame(maxWidth: .infinity, minHeight: 46)
+                Text("Визуальный индикатор активной фокус-сессии; аудио и микрофон не анализируются.")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -194,7 +247,24 @@ struct NotchPanelView: View {
                     if let url = event.meetingURL {
                         Button { NSWorkspace.shared.open(url) } label: { Image(systemName: "video.fill") }.buttonStyle(.plain).help("Открыть встречу")
                     }
+                    if event.source == .apple {
+                        Button { editCalendarEvent(event) } label: { Image(systemName: "pencil") }.buttonStyle(.plain)
+                        Button { store.deleteCalendarEvent(id: event.id) } label: { Image(systemName: "trash") }.buttonStyle(.plain)
+                    }
                 }.padding(.vertical, 4)
+            }
+            if store.settings.appleCalendarEnabled {
+                Divider().opacity(0.2)
+                TextField("Название события", text: $calendarTitle).textFieldStyle(.plain)
+                HStack {
+                    DatePicker("Начало", selection: $calendarStart).labelsHidden()
+                    DatePicker("Конец", selection: $calendarEnd).labelsHidden()
+                }
+                HStack {
+                    Button(calendarDraftID == nil ? "Создать событие" : "Сохранить изменения") { saveCalendarDraft() }
+                        .disabled(calendarTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || calendarEnd <= calendarStart)
+                    if calendarDraftID != nil { Button("Отмена", action: clearCalendarDraft).buttonStyle(.borderless) }
+                }
             }
         }
     }
@@ -212,6 +282,7 @@ struct NotchPanelView: View {
             }
             Divider().opacity(0.2)
             HStack { Text("Работа сегодня"); Spacer(); Text(shortFormat(store.todayDuration)).bold() }
+            Button("Завершить день", action: store.finishDay).buttonStyle(.borderedProminent)
         }
     }
 
@@ -222,12 +293,31 @@ struct NotchPanelView: View {
             if plan.orderedTaskIDs.isEmpty { Text("Нет запланированных задач").foregroundStyle(.secondary) }
             ForEach(Array(plan.orderedTaskIDs.enumerated()), id: \.element) { offset, id in
                 if let task = store.tasks.first(where: { $0.id == id }) {
-                    HStack { Text("\(offset + 1).").foregroundStyle(.secondary); Text(title(task)).lineLimit(1); Spacer() }
+                    HStack {
+                        Text("\(offset + 1).").foregroundStyle(.secondary); Text(title(task)).lineLimit(1); Spacer()
+                        Button { movePlanItem(offset, -1) } label: { Image(systemName: "chevron.up") }
+                            .disabled(offset == 0)
+                        Button { movePlanItem(offset, 1) } label: { Image(systemName: "chevron.down") }
+                            .disabled(offset == plan.orderedTaskIDs.count - 1)
+                        Button { store.removeTomorrowTask(id) } label: { Image(systemName: "xmark") }
+                    }.buttonStyle(.plain)
                 }
             }
             Button(plan.isConfirmed ? "План готов" : "Утвердить план") { store.confirm(plan) }
                 .buttonStyle(.borderedProminent).disabled(plan.isConfirmed)
         }
+    }
+
+    private var dayReview: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack { Text("ИТОГИ ДНЯ").font(.headline); Spacer(); Button("Закрыть", action: store.closeDayReview).buttonStyle(.borderless) }
+            HStack { Text("Выполнено"); Spacer(); Text("\(store.doneToday.count)").bold() }
+            HStack { Text("Рабочее время"); Spacer(); Text(shortFormat(store.todayDuration)).bold() }
+            HStack { Text("Незавершено"); Spacer(); Text("\(store.tasks.filter { $0.status != .done }.count)").bold() }
+            HStack { Text("Waiting на завтра"); Spacer(); Text("\(store.waitingTomorrowCount)").bold() }
+            Button("Перейти к плану на завтра") { selectedSection = .tomorrow }
+                .buttonStyle(.borderedProminent)
+        }.padding(10).background(.white.opacity(0.09), in: RoundedRectangle(cornerRadius: 9))
     }
 
     private var clipboardSection: some View {
@@ -254,6 +344,7 @@ struct NotchPanelView: View {
         Section.allCases.filter { section in
             switch section {
             case .now: true
+            case .focus: store.settings.enabledBlocks.contains(.pomodoro) || store.settings.enabledBlocks.contains(.equalizer)
             case .calendar: store.settings.enabledBlocks.contains(.calendar) &&
                 (store.settings.appleCalendarEnabled || store.settings.googleCalendarEnabled)
             case .waiting: store.settings.enabledBlocks.contains(.waiting)
@@ -266,8 +357,32 @@ struct NotchPanelView: View {
     private func addProject() { store.addProject(named: newProjectName); newProjectName = "" }
     private func addWaiting(days: Int) {
         let date = Calendar.current.date(byAdding: .day, value: days, to: .now) ?? .now
+        addWaiting(date: date)
+    }
+    private func addWaiting(date: Date) {
         store.addWaiting(title: waitingTitle, person: waitingPerson, returnDate: date)
         waitingTitle = ""; waitingPerson = ""
+    }
+    private func movePlanItem(_ offset: Int, _ delta: Int) {
+        let destination = offset + delta
+        guard destination >= 0 else { return }
+        store.moveTomorrowTask(fromOffsets: IndexSet(integer: offset), toOffset: delta > 0 ? destination + 1 : destination)
+    }
+    private func editCalendarEvent(_ event: CalendarEventItem) {
+        calendarDraftID = event.id
+        calendarTitle = event.title
+        calendarStart = event.startDate
+        calendarEnd = event.endDate
+    }
+    private func saveCalendarDraft() {
+        store.saveCalendarEvent(id: calendarDraftID, title: calendarTitle, start: calendarStart, end: calendarEnd)
+        clearCalendarDraft()
+    }
+    private func clearCalendarDraft() {
+        calendarDraftID = nil
+        calendarTitle = ""
+        calendarStart = .now
+        calendarEnd = .now.addingTimeInterval(3600)
     }
     private func title(_ task: WorkTask) -> String { [store.project(for: task)?.name, task.title].compactMap { $0 }.joined(separator: " · ") }
     private func format(_ value: TimeInterval) -> String {

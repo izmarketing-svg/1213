@@ -51,6 +51,7 @@ struct WorkTask: Identifiable, Codable, Hashable, Sendable {
     var plannedDate: Date?
     var order: Int = 0
     var reminderIdentifier: String?
+    var reminderListIdentifier: String?
     var sessions: [WorkSession] = []
     var completedAt: Date?
 
@@ -86,7 +87,7 @@ struct DailyPlan: Identifiable, Codable, Hashable, Sendable {
 }
 
 enum PanelBlock: String, Codable, CaseIterable, Identifiable, Sendable {
-    case now, next, capture, waiting, projects, done, tomorrow, calendar, clipboard
+    case now, next, capture, waiting, projects, done, tomorrow, calendar, clipboard, pomodoro, equalizer
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -99,6 +100,8 @@ enum PanelBlock: String, Codable, CaseIterable, Identifiable, Sendable {
         case .tomorrow: "TODAY / TOMORROW"
         case .calendar: "CALENDAR"
         case .clipboard: "CLIPBOARD"
+        case .pomodoro: "POMODORO"
+        case .equalizer: "FOCUS EQUALIZER"
         }
     }
 }
@@ -110,6 +113,8 @@ struct UserSettings: Codable, Hashable, Sendable {
         case backToWorkMinutes, waitingNotifications, deadlineNotifications
         case backToWorkNotifications, remindersIntegrationEnabled, clipboardEnabled, enabledBlocks
         case appleCalendarEnabled, selectedAppleCalendarIDs, googleCalendarEnabled, googleCalendarClientID
+        case togglePanelKey, captureKey, projectsKey, pauseResumeKey
+        case pomodoroWorkMinutes, pomodoroBreakMinutes
     }
     var launchAtLogin = false
     var opensOnHover = false
@@ -128,6 +133,12 @@ struct UserSettings: Codable, Hashable, Sendable {
     var selectedAppleCalendarIDs = Set<String>()
     var googleCalendarEnabled = false
     var googleCalendarClientID = ""
+    var togglePanelKey = "n"
+    var captureKey = "c"
+    var projectsKey = "p"
+    var pauseResumeKey = " "
+    var pomodoroWorkMinutes = 25
+    var pomodoroBreakMinutes = 5
     var enabledBlocks = Set(PanelBlock.allCases.filter { $0 != .clipboard })
 
     init() {}
@@ -151,6 +162,12 @@ struct UserSettings: Codable, Hashable, Sendable {
         selectedAppleCalendarIDs = try c.decodeIfPresent(Set<String>.self, forKey: .selectedAppleCalendarIDs) ?? []
         googleCalendarEnabled = try c.decodeIfPresent(Bool.self, forKey: .googleCalendarEnabled) ?? false
         googleCalendarClientID = try c.decodeIfPresent(String.self, forKey: .googleCalendarClientID) ?? ""
+        togglePanelKey = try c.decodeIfPresent(String.self, forKey: .togglePanelKey) ?? "n"
+        captureKey = try c.decodeIfPresent(String.self, forKey: .captureKey) ?? "c"
+        projectsKey = try c.decodeIfPresent(String.self, forKey: .projectsKey) ?? "p"
+        pauseResumeKey = try c.decodeIfPresent(String.self, forKey: .pauseResumeKey) ?? " "
+        pomodoroWorkMinutes = try c.decodeIfPresent(Int.self, forKey: .pomodoroWorkMinutes) ?? 25
+        pomodoroBreakMinutes = try c.decodeIfPresent(Int.self, forKey: .pomodoroBreakMinutes) ?? 5
         enabledBlocks = try c.decodeIfPresent(Set<PanelBlock>.self, forKey: .enabledBlocks) ?? Set(PanelBlock.allCases.filter { $0 != .clipboard })
         enabledBlocks.insert(.now)
     }
@@ -174,6 +191,12 @@ struct UserSettings: Codable, Hashable, Sendable {
         try c.encode(selectedAppleCalendarIDs, forKey: .selectedAppleCalendarIDs)
         try c.encode(googleCalendarEnabled, forKey: .googleCalendarEnabled)
         try c.encode(googleCalendarClientID, forKey: .googleCalendarClientID)
+        try c.encode(togglePanelKey, forKey: .togglePanelKey)
+        try c.encode(captureKey, forKey: .captureKey)
+        try c.encode(projectsKey, forKey: .projectsKey)
+        try c.encode(pauseResumeKey, forKey: .pauseResumeKey)
+        try c.encode(pomodoroWorkMinutes, forKey: .pomodoroWorkMinutes)
+        try c.encode(pomodoroBreakMinutes, forKey: .pomodoroBreakMinutes)
         try c.encode(enabledBlocks, forKey: .enabledBlocks)
     }
 }
@@ -347,6 +370,18 @@ enum DailyPlanning {
             tasks[index].order = order
             tasks[index].plannedDate = plan.date
         }
+    }
+
+    static func tasksReturningFromWaiting(on date: Date, tasks: [WorkTask], waiting: [WaitingItem], calendar: Calendar = .current) -> [WorkTask] {
+        waiting.filter { $0.status == .waiting && calendar.isDate($0.returnDate, inSameDayAs: date) }
+            .compactMap { item in
+                let title = "Проверить: \(item.title)"
+                let alreadyExists = tasks.contains {
+                    $0.title == title && $0.projectID == item.projectID && $0.plannedDate.map { calendar.isDate($0, inSameDayAs: date) } == true
+                }
+                return alreadyExists ? nil : WorkTask(title: title, projectID: item.projectID, status: .planned,
+                                                       dueDate: date, plannedDate: date)
+            }
     }
 }
 
