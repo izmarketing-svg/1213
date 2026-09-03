@@ -38,6 +38,24 @@ final class AppleCalendarService {
         }
     }
 
+    func saveEvent(identifier: String?, title: String, start: Date, end: Date) async throws {
+        guard await requestAccess() else { return }
+        let rawID = identifier?.replacingOccurrences(of: "apple:", with: "")
+        let event = rawID.flatMap(store.event(withIdentifier:)) ?? EKEvent(eventStore: store)
+        event.title = title
+        event.startDate = start
+        event.endDate = end
+        if event.calendar == nil { event.calendar = store.defaultCalendarForNewEvents }
+        try store.save(event, span: .thisEvent, commit: true)
+    }
+
+    func deleteEvent(identifier: String) async throws {
+        guard await requestAccess() else { return }
+        let rawID = identifier.replacingOccurrences(of: "apple:", with: "")
+        guard let event = store.event(withIdentifier: rawID) else { return }
+        try store.remove(event, span: .thisEvent, commit: true)
+    }
+
     private static func detectMeetingURL(in text: String?) -> URL? {
         guard let text, let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else { return nil }
         let range = NSRange(text.startIndex..., in: text)
@@ -68,6 +86,8 @@ final class GoogleCalendarService: NSObject, ASWebAuthenticationPresentationCont
 
     private struct TokenResponse: Decodable { var access_token: String; var expires_in: Double; var refresh_token: String? }
     private struct EventsResponse: Decodable { var items: [GoogleEvent]? }
+    private struct CalendarListResponse: Decodable { var items: [GoogleCalendar]? }
+    private struct GoogleCalendar: Decodable { var id: String; var summary: String? }
     private struct GoogleEvent: Decodable {
         struct Moment: Decodable { var date: String?; var dateTime: String? }
         var id: String; var summary: String?; var start: Moment; var end: Moment; var htmlLink: String?
@@ -112,26 +132,51 @@ final class GoogleCalendarService: NSObject, ASWebAuthenticationPresentationCont
 
     func events(clientID: String, from start: Date, to end: Date) async throws -> [CalendarEventItem] {
         var token = try await validToken(clientID: clientID)
-        var components = URLComponents(string: "https://www.googleapis.com/calendar/v3/calendars/primary/events")!
+        token = try await refreshedAfterUnauthorized(token: token, clientID: clientID) { token in
+            var request = URLRequest(url: URL(string: "https://www.googleapis.com/calendar/v3/users/me/calendarList")!)
+            request.setValue("Bearer \(token.accessToken)", forHTTPHeaderField: "Authorization")
+            return request
+        }
+        let calendars = try await calendarList(token: token)
+        var result: [CalendarEventItem] = []
+        for calendar in calendars {
+            result += try await events(in: calendar, token: token, from: start, to: end)
+        }
+        return result.sorted { $0.startDate < $1.startDate }
+    }
+
+    private func calendarList(token: StoredToken) async throws -> [GoogleCalendar] {
+        var request = URLRequest(url: URL(string: "https://www.googleapis.com/calendar/v3/users/me/calendarList")!)
+        request.setValue("Bearer \(token.accessToken)", forHTTPHeaderField: "Authorization")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw GoogleError.invalidResponse }
+        return try JSONDecoder().decode(CalendarListResponse.self, from: data).items ?? []
+    }
+
+    private func events(in calendar: GoogleCalendar, token: StoredToken, from start: Date, to end: Date) async throws -> [CalendarEventItem] {
+        let encodedID = calendar.id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? calendar.id
+        var components = URLComponents(string: "https://www.googleapis.com/calendar/v3/calendars/\(encodedID)/events")!
         components.queryItems = [URLQueryItem(name: "timeMin", value: start.ISO8601Format()),
                                  URLQueryItem(name: "timeMax", value: end.ISO8601Format()),
                                  URLQueryItem(name: "singleEvents", value: "true"),
                                  URLQueryItem(name: "orderBy", value: "startTime")]
         var request = URLRequest(url: components.url!); request.setValue("Bearer \(token.accessToken)", forHTTPHeaderField: "Authorization")
-        var (data, response) = try await URLSession.shared.data(for: request)
-        if (response as? HTTPURLResponse)?.statusCode == 401 {
-            token = try await refresh(token: token, clientID: clientID)
-            request.setValue("Bearer \(token.accessToken)", forHTTPHeaderField: "Authorization")
-            (data, response) = try await URLSession.shared.data(for: request)
-        }
+        let (data, response) = try await URLSession.shared.data(for: request)
         guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw GoogleError.invalidResponse }
         let decoded = try JSONDecoder().decode(EventsResponse.self, from: data)
         return (decoded.items ?? []).compactMap { item in
             guard let startDate = Self.date(item.start), let endDate = Self.date(item.end) else { return nil }
             return CalendarEventItem(id: "google:\(item.id)", title: item.summary ?? "Без названия", startDate: startDate,
-                                     endDate: endDate, isAllDay: item.start.date != nil, calendarTitle: "Google Calendar",
+                                     endDate: endDate, isAllDay: item.start.date != nil, calendarTitle: calendar.summary ?? "Google Calendar",
                                      source: .google, meetingURL: item.hangoutLink.flatMap(URL.init(string:)) ?? item.htmlLink.flatMap(URL.init(string:)))
         }
+    }
+
+    private func refreshedAfterUnauthorized(token: StoredToken, clientID: String,
+                                            request: (StoredToken) -> URLRequest) async throws -> StoredToken {
+        let (_, response) = try await URLSession.shared.data(for: request(token))
+        guard (response as? HTTPURLResponse)?.statusCode == 401 else { return token }
+        return try await refresh(token: token, clientID: clientID)
     }
 
     func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor { NSApp.keyWindow ?? NSApp.windows.first ?? NSWindow() }

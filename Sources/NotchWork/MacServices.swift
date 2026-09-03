@@ -34,8 +34,8 @@ final class RemindersService {
         try? store.save(reminder, commit: true)
     }
 
-    func fetch(listIdentifier: String?) async -> [ReminderRecord] {
-        guard await requestAccess() else { return [] }
+    func fetch(listIdentifier: String?) async -> [ReminderRecord]? {
+        guard await requestAccess() else { return nil }
         let calendars = listIdentifier.flatMap(store.calendar(withIdentifier:)).map { [$0] }
         let predicate = store.predicateForReminders(in: calendars)
         return await withCheckedContinuation { continuation in
@@ -44,7 +44,8 @@ final class RemindersService {
                     ReminderRecord(identifier: reminder.calendarItemIdentifier,
                                    title: reminder.title,
                                    dueDate: reminder.dueDateComponents.flatMap { Calendar.current.date(from: $0) },
-                                   isCompleted: reminder.isCompleted)
+                                   isCompleted: reminder.isCompleted,
+                                   listIdentifier: reminder.calendar.calendarIdentifier)
                 })
             }
         }
@@ -56,6 +57,7 @@ struct ReminderRecord: Sendable {
     var title: String
     var dueDate: Date?
     var isCompleted: Bool
+    var listIdentifier: String
 }
 
 struct ReminderListOption: Identifiable, Hashable {
@@ -94,25 +96,41 @@ final class NotificationService {
         cancelWaiting(item)
         if item.status == .waiting { scheduleWaiting(item) }
     }
+
+    func scheduleDeadline(for task: WorkTask) {
+        guard let dueDate = task.dueDate, dueDate > .now else { return }
+        let content = UNMutableNotificationContent()
+        content.title = "Срок задачи"
+        content.body = task.title
+        let components = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: dueDate)
+        let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "deadline-\(task.id)", content: content, trigger: trigger))
+    }
+
+    func showBackToWork(task: WorkTask) {
+        let content = UNMutableNotificationContent()
+        content.title = "Вы работали над"
+        content.body = task.title
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "back-to-work-\(task.id)", content: content, trigger: nil))
+    }
 }
 
 @MainActor
 final class GlobalShortcutMonitor {
     enum Action { case togglePanel, capture, projects, pauseResume }
     var handler: ((Action) -> Void)?
+    var settingsProvider: (() -> UserSettings)?
     private var monitor: Any?
 
     func start() {
         monitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             guard flags.contains(.command), flags.contains(.shift) else { return }
-            let action: Action? = switch event.charactersIgnoringModifiers?.lowercased() {
-            case "n": .togglePanel
-            case "c": .capture
-            case "p": .projects
-            case " ": .pauseResume
-            default: nil
-            }
+            guard let settings = self?.settingsProvider?(), let key = event.charactersIgnoringModifiers?.lowercased() else { return }
+            let action: Action? = key == settings.togglePanelKey ? .togglePanel
+                : key == settings.captureKey ? .capture
+                : key == settings.projectsKey ? .projects
+                : key == settings.pauseResumeKey ? .pauseResume : nil
             if let action { Task { @MainActor in self?.handler?(action) } }
         }
     }

@@ -72,10 +72,14 @@ struct NotchWorkSettingsView: View {
                     Text("Выключено").tag(Int?.none)
                     ForEach([10, 15, 20, 30], id: \.self) { Text("Через \($0) минут").tag(Int?.some($0)) }
                 }
+                Stepper("Pomodoro: \(store.settings.pomodoroWorkMinutes) мин.", value: binding(\.pomodoroWorkMinutes), in: 5...90, step: 5)
+                Stepper("Перерыв: \(store.settings.pomodoroBreakMinutes) мин.", value: binding(\.pomodoroBreakMinutes), in: 1...30)
             }
             Section("Горячие клавиши") {
-                LabeledContent("Панель", value: "⌘⇧N"); LabeledContent("Capture", value: "⌘⇧C")
-                LabeledContent("Проекты", value: "⌘⇧P"); LabeledContent("Пауза / продолжить", value: "⌘⇧Space")
+                shortcutPicker("Панель", keyPath: \.togglePanelKey)
+                shortcutPicker("Capture", keyPath: \.captureKey)
+                shortcutPicker("Проекты", keyPath: \.projectsKey)
+                shortcutPicker("Пауза / продолжить", keyPath: \.pauseResumeKey)
             }
             if let loginError { Text(loginError).foregroundStyle(.red).font(.caption) }
         }.formStyle(.grouped)
@@ -150,6 +154,14 @@ struct NotchWorkSettingsView: View {
                 }
             }
             if let projectID = store.currentProjectID {
+                Section("Название и иконка") {
+                    TextField("Название", text: projectNameBinding(projectID))
+                    Picker("Иконка", selection: projectIconBinding(projectID)) {
+                        ForEach(["folder.fill", "briefcase.fill", "person.fill", "graduationcap.fill", "heart.fill", "star.fill"], id: \.self) {
+                            Label($0, systemImage: $0).tag($0)
+                        }
+                    }
+                }
                 Section("Workspace") {
                     ForEach(store.resources(for: projectID)) { resource in
                         HStack { Image(systemName: icon(for: resource.kind)); Text(resource.title); Spacer()
@@ -206,8 +218,32 @@ struct NotchWorkSettingsView: View {
         store.addResource(WorkspaceResource(title: url.deletingPathExtension().lastPathComponent, location: url, kind: kind), to: projectID)
     }
     private func icon(for kind: WorkspaceResourceKind) -> String { switch kind { case .url: "link"; case .application: "app"; case .folder: "folder" } }
+    private func projectNameBinding(_ id: UUID) -> Binding<String> {
+        Binding(get: { store.projects.first(where: { $0.id == id })?.name ?? "" }, set: { value in
+            let icon = store.projects.first(where: { $0.id == id })?.icon ?? "folder.fill"
+            store.updateProject(id, name: value, icon: icon)
+        })
+    }
+    private func projectIconBinding(_ id: UUID) -> Binding<String> {
+        Binding(get: { store.projects.first(where: { $0.id == id })?.icon ?? "folder.fill" }, set: { value in
+            let name = store.projects.first(where: { $0.id == id })?.name ?? "Проект"
+            store.updateProject(id, name: name, icon: value)
+        })
+    }
     private func binding<Value>(_ keyPath: WritableKeyPath<UserSettings, Value>, afterChange: ((Value) -> Void)? = nil) -> Binding<Value> {
         Binding(get: { store.settings[keyPath: keyPath] }, set: { value in store.updateSettings { $0[keyPath: keyPath] = value }; afterChange?(value) })
+    }
+    private func shortcutPicker(_ title: String, keyPath: WritableKeyPath<UserSettings, String>) -> some View {
+        Picker(title, selection: binding(keyPath)) {
+            ForEach(Array("abcdefghijklmnopqrstuvwxyz").map(String.init) + [" "], id: \.self) { key in
+                Text(key == " " ? "⌘⇧Space" : "⌘⇧\(key.uppercased())").tag(key)
+                    .disabled(usedShortcutKeys(excluding: keyPath).contains(key))
+            }
+        }
+    }
+    private func usedShortcutKeys(excluding keyPath: WritableKeyPath<UserSettings, String>) -> Set<String> {
+        let paths: [WritableKeyPath<UserSettings, String>] = [\.togglePanelKey, \.captureKey, \.projectsKey, \.pauseResumeKey]
+        return Set(paths.filter { $0 != keyPath }.map { store.settings[keyPath: $0] })
     }
 }
 

@@ -19,12 +19,17 @@ final class WorkdayStore: ObservableObject {
     @Published var draftTaskTitle = ""
     @Published private(set) var resumeSuggestionID: UUID?
     @Published private(set) var backToWorkSuggestionID: UUID?
+    @Published var isDayReviewPresented = false
+    @Published private(set) var pomodoroEndsAt: Date?
+    @Published private(set) var pomodoroIsBreak = false
 
     private let persistenceURL: URL
     private var cancellables: Set<AnyCancellable> = []
     var onTaskCompleted: ((WorkTask) -> Void)?
     var onWaitingCreated: ((WaitingItem) -> Void)?
     var onWaitingChanged: ((WaitingItem) -> Void)?
+    var onSaveCalendarEvent: ((String?, String, Date, Date) -> Void)?
+    var onDeleteCalendarEvent: ((String) -> Void)?
 
     init(persistenceURL: URL? = nil) {
         self.persistenceURL = persistenceURL ?? Self.defaultPersistenceURL
@@ -48,6 +53,10 @@ final class WorkdayStore: ObservableObject {
         waitingItems.filter { $0.status == .waiting && $0.returnDate <= Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: .now))! }
     }
     var todayDuration: TimeInterval { tasks.reduce(0) { $0 + $1.duration(on: .now) } }
+    var waitingTomorrowCount: Int {
+        guard let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: .now) else { return 0 }
+        return waitingItems.filter { $0.status == .waiting && Calendar.current.isDate($0.returnDate, inSameDayAs: tomorrow) }.count
+    }
     var resumeSuggestion: WorkTask? { resumeSuggestionID.flatMap { id in tasks.first { $0.id == id } } }
     var tomorrowPlanPreview: DailyPlan {
         let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: .now))!
@@ -79,6 +88,18 @@ final class WorkdayStore: ObservableObject {
         let to = min(max(0, from + offset), queue.count - 1)
         guard from != to else { return }
         queue.move(fromOffsets: IndexSet(integer: from), toOffset: to > from ? to + 1 : to)
+        for (order, queued) in queue.enumerated() {
+            if let index = tasks.firstIndex(where: { $0.id == queued.id }) { tasks[index].order = order }
+        }
+        save()
+    }
+
+    func moveNext(from sourceID: UUID, before destinationID: UUID) {
+        var queue = tasks.filter { $0.status == .next }.sorted { $0.order < $1.order }
+        guard let source = queue.firstIndex(where: { $0.id == sourceID }),
+              let destination = queue.firstIndex(where: { $0.id == destinationID }), source != destination else { return }
+        let item = queue.remove(at: source)
+        queue.insert(item, at: source < destination ? destination - 1 : destination)
         for (order, queued) in queue.enumerated() {
             if let index = tasks.firstIndex(where: { $0.id == queued.id }) { tasks[index].order = order }
         }
@@ -150,6 +171,7 @@ final class WorkdayStore: ObservableObject {
     func makeTomorrowPlan(now: Date = .now) -> DailyPlan {
         let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: now))!
         if let existing = dailyPlans.first(where: { Calendar.current.isDate($0.date, inSameDayAs: tomorrow) }) { return existing }
+        tasks.append(contentsOf: DailyPlanning.tasksReturningFromWaiting(on: tomorrow, tasks: tasks, waiting: waitingItems))
         let plan = DailyPlan(date: tomorrow, orderedTaskIDs: DailyPlanning.candidates(for: tomorrow, tasks: tasks, waiting: waitingItems))
         dailyPlans.append(plan); save(); return plan
     }
@@ -160,6 +182,50 @@ final class WorkdayStore: ObservableObject {
         dailyPlans[index].isConfirmed = true
         DailyPlanning.applyConfirmedPlan(dailyPlans[index], to: &tasks)
         save()
+    }
+
+    func moveTomorrowTask(fromOffsets: IndexSet, toOffset: Int) {
+        var plan = makeTomorrowPlan()
+        plan.orderedTaskIDs.move(fromOffsets: fromOffsets, toOffset: toOffset)
+        replaceTomorrowPlan(plan)
+    }
+
+    func removeTomorrowTask(_ id: UUID) {
+        var plan = makeTomorrowPlan()
+        plan.orderedTaskIDs.removeAll { $0 == id }
+        replaceTomorrowPlan(plan)
+    }
+
+    func finishDay() {
+        WorkdayTransitions.pauseActive(in: &tasks, at: .now)
+        _ = makeTomorrowPlan()
+        isDayReviewPresented = true
+        save()
+    }
+
+    func closeDayReview() { isDayReviewPresented = false }
+
+    func togglePomodoro(now: Date = .now) {
+        if pomodoroEndsAt != nil { pomodoroEndsAt = nil; return }
+        let minutes = pomodoroIsBreak ? settings.pomodoroBreakMinutes : settings.pomodoroWorkMinutes
+        pomodoroEndsAt = Calendar.current.date(byAdding: .minute, value: minutes, to: now)
+    }
+
+    func resetPomodoro() {
+        pomodoroEndsAt = nil
+        pomodoroIsBreak = false
+    }
+
+    func updatePomodoro(now: Date = .now) {
+        guard let end = pomodoroEndsAt, now >= end else { return }
+        pomodoroIsBreak.toggle()
+        let minutes = pomodoroIsBreak ? settings.pomodoroBreakMinutes : settings.pomodoroWorkMinutes
+        pomodoroEndsAt = Calendar.current.date(byAdding: .minute, value: minutes, to: now)
+    }
+
+    func pomodoroRemaining(at now: Date = .now) -> TimeInterval {
+        guard let end = pomodoroEndsAt else { return Double((pomodoroIsBreak ? settings.pomodoroBreakMinutes : settings.pomodoroWorkMinutes) * 60) }
+        return max(0, end.timeIntervalSince(now))
     }
 
     func resources(for projectID: UUID) -> [WorkspaceResource] { workspaceResources[projectID] ?? [] }
@@ -190,13 +256,24 @@ final class WorkdayStore: ObservableObject {
         calendarError = error
     }
 
-    func linkReminder(_ identifier: String, to taskID: UUID) {
-        guard let index = tasks.firstIndex(where: { $0.id == taskID }) else { return }
-        tasks[index].reminderIdentifier = identifier; save()
+    func saveCalendarEvent(id: String?, title: String, start: Date, end: Date) {
+        let clean = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty, end > start else { return }
+        onSaveCalendarEvent?(id, clean, start, end)
     }
 
-    func synchronizeReminders(_ records: [ReminderRecord], now: Date = .now) {
+    func deleteCalendarEvent(id: String) { onDeleteCalendarEvent?(id) }
+
+    func linkReminder(_ identifier: String, listIdentifier: String?, to taskID: UUID) {
+        guard let index = tasks.firstIndex(where: { $0.id == taskID }) else { return }
+        tasks[index].reminderIdentifier = identifier
+        tasks[index].reminderListIdentifier = listIdentifier
+        save()
+    }
+
+    func synchronizeReminders(_ records: [ReminderRecord], listIdentifier: String?, now: Date = .now) {
         var changed = false
+        let fetchedIDs = Set(records.map(\.identifier))
         for record in records {
             if let index = tasks.firstIndex(where: { $0.reminderIdentifier == record.identifier }) {
                 if record.isCompleted && tasks[index].status != .done {
@@ -208,9 +285,24 @@ final class WorkdayStore: ObservableObject {
                 }
                 if tasks[index].title != record.title { tasks[index].title = record.title; changed = true }
                 if tasks[index].dueDate != record.dueDate { tasks[index].dueDate = record.dueDate; changed = true }
+                if tasks[index].reminderListIdentifier != record.listIdentifier {
+                    tasks[index].reminderListIdentifier = record.listIdentifier; changed = true
+                }
             } else if !record.isCompleted {
                 tasks.append(WorkTask(title: record.title, status: .planned, dueDate: record.dueDate,
-                                      plannedDate: record.dueDate, reminderIdentifier: record.identifier))
+                                      plannedDate: record.dueDate, reminderIdentifier: record.identifier,
+                                      reminderListIdentifier: record.listIdentifier))
+                changed = true
+            }
+        }
+        for index in tasks.indices where tasks[index].reminderIdentifier.map({ !fetchedIDs.contains($0) }) == true {
+            let belongsToScope = listIdentifier == nil || tasks[index].reminderListIdentifier == listIdentifier
+            if belongsToScope {
+                // The Reminder was removed externally. Preserve the user's local task,
+                // detach the stale system identifier, and return unfinished mirrors to Inbox.
+                tasks[index].reminderIdentifier = nil
+                tasks[index].reminderListIdentifier = nil
+                if tasks[index].status != .done { tasks[index].status = .inbox }
                 changed = true
             }
         }
@@ -223,6 +315,15 @@ final class WorkdayStore: ObservableObject {
         let project = Project(name: clean)
         projects.append(project)
         currentProjectID = project.id
+        save()
+    }
+
+    func updateProject(_ id: UUID, name: String, icon: String) {
+        guard let index = projects.firstIndex(where: { $0.id == id }) else { return }
+        let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { return }
+        projects[index].name = clean
+        projects[index].icon = icon.isEmpty ? "folder.fill" : icon
         save()
     }
 
@@ -325,6 +426,13 @@ final class WorkdayStore: ObservableObject {
     private func updateWaiting(_ id: UUID, transform: (inout WaitingItem) -> Void) {
         guard let index = waitingItems.firstIndex(where: { $0.id == id }) else { return }
         transform(&waitingItems[index]); onWaitingChanged?(waitingItems[index]); save()
+    }
+
+
+    private func replaceTomorrowPlan(_ plan: DailyPlan) {
+        dailyPlans.removeAll { Calendar.current.isDate($0.date, inSameDayAs: plan.date) }
+        dailyPlans.append(plan)
+        save()
     }
 
     private static var defaultPersistenceURL: URL {

@@ -36,6 +36,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.refreshCalendars()
             }
         }.store(in: &cancellables)
+        store.$backToWorkSuggestionID.dropFirst().compactMap { $0 }.sink { [weak self] id in
+            guard let self, self.store.settings.backToWorkNotifications,
+                  let task = self.store.tasks.first(where: { $0.id == id }) else { return }
+            self.notifications.showBackToWork(task: task)
+        }.store(in: &cancellables)
 
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         item.button?.image = NSImage(systemSymbolName: "rectangle.topthird.inset.filled", accessibilityDescription: "Notch Work")
@@ -57,6 +62,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case .pauseResume: self.store.togglePause()
             }
         }
+        shortcuts.settingsProvider = { [weak self] in self?.store.settings ?? UserSettings() }
         shortcuts.start()
         clipboard.onText = { [weak self] text in self?.store.recordClipboardText(text) }
         if store.settings.clipboardEnabled { clipboard.start() }
@@ -71,6 +77,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.notifications.scheduleWaiting(item)
         }
         store.onWaitingChanged = { [weak self] item in self?.notifications.synchronizeWaiting(item) }
+        store.onSaveCalendarEvent = { [weak self] id, title, start, end in
+            guard let self else { return }
+            Task { try? await self.appleCalendar.saveEvent(identifier: id, title: title, start: start, end: end); self.refreshCalendars() }
+        }
+        store.onDeleteCalendarEvent = { [weak self] id in
+            guard let self else { return }
+            Task { try? await self.appleCalendar.deleteEvent(identifier: id); self.refreshCalendars() }
+        }
         if store.settings.waitingNotifications || store.settings.deadlineNotifications {
             Task { await notifications.requestAccess() }
         }
@@ -88,10 +102,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func showCapture() {
         let controller = CapturePanelController(store: store) { [weak self] task in
             guard let self else { return }
+            if self.store.settings.deadlineNotifications { self.notifications.scheduleDeadline(for: task) }
             Task {
                 guard self.store.settings.remindersIntegrationEnabled else { return }
                 if let identifier = await self.reminders.create(for: task, listIdentifier: self.store.settings.remindersListIdentifier) {
-                    self.store.linkReminder(identifier, to: task.id)
+                    self.store.linkReminder(identifier, listIdentifier: self.store.settings.remindersListIdentifier, to: task.id)
                 }
             }
         }
@@ -107,7 +122,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard store.settings.remindersIntegrationEnabled else { return }
         Task {
             let records = await reminders.fetch(listIdentifier: store.settings.remindersListIdentifier)
-            store.synchronizeReminders(records)
+            if let records { store.synchronizeReminders(records, listIdentifier: store.settings.remindersListIdentifier) }
         }
     }
     private func refreshCalendars() {

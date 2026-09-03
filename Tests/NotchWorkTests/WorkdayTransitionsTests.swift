@@ -75,6 +75,16 @@ struct DailyPlanningTests {
         #expect(mutable.filter { $0.status == .next }.count == 3)
         #expect(mutable.prefix(3).map(\.status) == [.next, .next, .next])
     }
+
+    @Test func waitingDueTomorrowBecomesAPlannableTaskWithoutDuplicates() {
+        let date = Date(timeIntervalSince1970: 1_788_393_600)
+        let waiting = WaitingItem(title: "баннеры", person: "Дизайнер", returnDate: date)
+        let first = DailyPlanning.tasksReturningFromWaiting(on: date, tasks: [], waiting: [waiting])
+        #expect(first.count == 1)
+        #expect(first.first?.title == "Проверить: баннеры")
+        let second = DailyPlanning.tasksReturningFromWaiting(on: date, tasks: first, waiting: [waiting])
+        #expect(second.isEmpty)
+    }
 }
 
 struct PersistenceMigrationTests {
@@ -85,6 +95,14 @@ struct PersistenceMigrationTests {
         #expect(snapshot.dailyPlans.isEmpty)
         #expect(snapshot.workspaceResources.isEmpty)
         #expect(snapshot.settings.captureDefaultOffsetDays == 1)
+    }
+
+    @Test func decodesTaskSavedBeforeReminderListTracking() throws {
+        let id = UUID()
+        let data = Data("{\"id\":\"\(id.uuidString)\",\"title\":\"Old task\",\"status\":\"inbox\",\"createdAt\":0,\"order\":0,\"sessions\":[]}".utf8)
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .secondsSince1970
+        let task = try decoder.decode(WorkTask.self, from: data)
+        #expect(task.reminderListIdentifier == nil)
     }
 
 
@@ -102,11 +120,17 @@ struct PersistenceMigrationTests {
         settings.selectedAppleCalendarIDs = ["work", "personal"]
         settings.googleCalendarEnabled = true
         settings.googleCalendarClientID = "client.apps.googleusercontent.com"
+        settings.captureKey = "k"
+        settings.pomodoroWorkMinutes = 50
+        settings.pomodoroBreakMinutes = 10
         settings.enabledBlocks.remove(.waiting)
         let decoded = try JSONDecoder().decode(UserSettings.self, from: JSONEncoder().encode(settings))
         #expect(decoded.appleCalendarEnabled)
         #expect(decoded.selectedAppleCalendarIDs == ["work", "personal"])
         #expect(decoded.googleCalendarEnabled)
+        #expect(decoded.captureKey == "k")
+        #expect(decoded.pomodoroWorkMinutes == 50)
+        #expect(decoded.pomodoroBreakMinutes == 10)
         #expect(decoded.enabledBlocks.contains(.waiting) == false)
         #expect(decoded.enabledBlocks.contains(.now))
     }

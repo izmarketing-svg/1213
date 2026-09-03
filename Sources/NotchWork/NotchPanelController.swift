@@ -9,10 +9,6 @@ final class PanelHostingView: NSHostingView<NotchPanelView> {
         self.store = store
         super.init(rootView: NotchPanelView(store: store))
     }
-    required init(rootView: NotchPanelView) {
-        self.store = rootView.store
-        super.init(rootView: rootView)
-    }
     @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
