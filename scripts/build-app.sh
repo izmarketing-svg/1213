@@ -30,6 +30,8 @@ else
   codesign --force --deep --options runtime --timestamp --sign "$SIGNING_IDENTITY" "$APP"
 fi
 cp -R "$APP" "$DIST/dmg-root/"
+cp "$ROOT/scripts/install-local.command" "$DIST/dmg-root/Установить Notch Work.command"
+chmod +x "$DIST/dmg-root/Установить Notch Work.command"
 ln -s /Applications "$DIST/dmg-root/Applications"
 hdiutil create -volname "Notch Work" -srcfolder "$DIST/dmg-root" -ov -format UDZO "$DMG"
 rm -rf "$DIST/dmg-root"
