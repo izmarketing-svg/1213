@@ -90,16 +90,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Task { await notifications.requestAccess() }
         }
         synchronizeReminders()
-        reminderSyncTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.synchronizeReminders() }
-        }
+        reminderSyncTimer = Timer.scheduledTimer(timeInterval: 60, target: self,
+                                                 selector: #selector(reminderSyncTimerDidFire), userInfo: nil, repeats: true)
         refreshCalendars()
-        calendarSyncTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.refreshCalendars() }
-        }
+        calendarSyncTimer = Timer.scheduledTimer(timeInterval: 300, target: self,
+                                                 selector: #selector(calendarSyncTimerDidFire), userInfo: nil, repeats: true)
     }
 
     @objc private func togglePanel() { panelController?.toggle() }
+    @objc private func reminderSyncTimerDidFire(_ timer: Timer) { synchronizeReminders() }
+    @objc private func calendarSyncTimerDidFire(_ timer: Timer) { refreshCalendars() }
     @objc private func showCapture() {
         let controller = CapturePanelController(store: store) { [weak self] task in
             guard let self else { return }

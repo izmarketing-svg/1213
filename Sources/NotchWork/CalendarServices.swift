@@ -72,7 +72,7 @@ private extension CGColor {
 }
 
 @MainActor
-final class GoogleCalendarService: NSObject, @preconcurrency ASWebAuthenticationPresentationContextProviding {
+final class GoogleCalendarService: NSObject, ASWebAuthenticationPresentationContextProviding {
     enum GoogleError: LocalizedError {
         case missingClientID, invalidResponse, authenticationCancelled
         var errorDescription: String? {
