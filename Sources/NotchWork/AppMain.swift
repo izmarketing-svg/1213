@@ -23,9 +23,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        let introductionKey = "didShowExpandedPanelForVersion050"
+        if !UserDefaults.standard.bool(forKey: introductionKey) {
+            store.isExpanded = true
+            UserDefaults.standard.set(true, forKey: introductionKey)
+        }
         let controller = NotchPanelController(store: store)
         panelController = controller
-        controller.showWindow(nil)
+        controller.present()
 
         store.$isExpanded.dropFirst().sink { [weak controller] _ in
             DispatchQueue.main.async { controller?.refreshSize() }

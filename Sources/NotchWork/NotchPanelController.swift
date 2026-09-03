@@ -49,6 +49,11 @@ final class NotchPanelController: NSWindowController {
 
     required init?(coder: NSCoder) { nil }
 
+    func present() {
+        position(on: preferredScreen())
+        window?.orderFrontRegardless()
+    }
+
     func toggle() {
         guard let window else { return }
         if window.isVisible { window.orderOut(nil) } else { position(on: preferredScreen()); window.orderFrontRegardless() }
@@ -79,7 +84,8 @@ final class NotchPanelController: NSWindowController {
         guard let window else { return }
         let width: CGFloat = 410
         let height: CGFloat = store.isExpanded ? 420 : 42
-        window.setFrame(NSRect(x: screen.frame.midX - width / 2, y: screen.frame.maxY - height, width: width, height: height), display: true)
+        let topEdge = screen.safeAreaInsets.top > 0 ? screen.frame.maxY : screen.visibleFrame.maxY
+        window.setFrame(NSRect(x: screen.frame.midX - width / 2, y: topEdge - height, width: width, height: height), display: true)
     }
 }
 #endif
