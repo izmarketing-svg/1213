@@ -65,7 +65,7 @@ jobs:
       - name: Verify bundle
         run: |
           codesign --verify --deep --strict --verbose=2 "dist/Notch Work.app"
-          lipo -verify_arch arm64 x86_64 "dist/Notch Work.app/Contents/MacOS/NotchWork"
+          lipo "dist/Notch Work.app/Contents/MacOS/NotchWork" -verify_arch arm64 x86_64
           plutil -lint "dist/Notch Work.app/Contents/Info.plist"
           test -s "dist/Notch-Work.dmg"
       - name: Upload downloadable DMG
