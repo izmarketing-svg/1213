@@ -3,6 +3,7 @@ import AppKit
 import Combine
 
 @main
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let store = WorkdayStore()
     private var panelController: NotchPanelController?
@@ -132,12 +133,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let end = Calendar.current.date(byAdding: .day, value: 2, to: start)!
             let apple = settings.appleCalendarEnabled
                 ? await appleCalendar.events(calendarIDs: settings.selectedAppleCalendarIDs, from: start, to: end) : []
-            var google: [CalendarEventItem] = []; var error: String?
+            var google: [CalendarEventItem] = []; var calendarError: String?
             if settings.googleCalendarEnabled && googleCalendar.isConnected {
                 do { google = try await googleCalendar.events(clientID: settings.googleCalendarClientID, from: start, to: end) }
-                catch { error = error.localizedDescription }
+                catch { calendarError = error.localizedDescription }
             }
-            store.updateCalendarEvents(apple: apple, google: google, error: error)
+            store.updateCalendarEvents(apple: apple, google: google, error: calendarError)
         }
     }
     @objc private func quit() { store.prepareToTerminate(); NSApp.terminate(nil) }

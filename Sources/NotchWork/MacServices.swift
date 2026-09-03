@@ -152,9 +152,8 @@ final class ClipboardMonitor {
 
     func start() {
         guard timer == nil else { return }
-        timer = Timer.scheduledTimer(withTimeInterval: 0.8, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.poll() }
-        }
+        timer = Timer.scheduledTimer(timeInterval: 0.8, target: self,
+                                     selector: #selector(timerDidFire), userInfo: nil, repeats: true)
     }
 
     func stop() { timer?.invalidate(); timer = nil }
@@ -167,26 +166,30 @@ final class ClipboardMonitor {
         onText?(text)
     }
 
+    @objc private func timerDidFire(_ timer: Timer) { poll() }
+
     deinit { timer?.invalidate() }
 }
 
 @MainActor
 final class BackToWorkMonitor {
     private weak var store: WorkdayStore?
-    private var observer: Any?
     private var timer: Timer?
     private var awaySince: Date?
     private var lastReminder: Date?
 
     func start(store: WorkdayStore) {
         self.store = store
-        observer = NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
-        ) { [weak self] _ in Task { @MainActor in self?.evaluateActiveApplication() } }
-        timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.evaluateReminder() }
-        }
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self, selector: #selector(applicationDidActivate),
+            name: NSWorkspace.didActivateApplicationNotification, object: nil
+        )
+        timer = Timer.scheduledTimer(timeInterval: 30, target: self,
+                                     selector: #selector(reminderTimerDidFire), userInfo: nil, repeats: true)
     }
+
+    @objc private func applicationDidActivate(_ notification: Notification) { evaluateActiveApplication() }
+    @objc private func reminderTimerDidFire(_ timer: Timer) { evaluateReminder() }
 
     private func evaluateActiveApplication() {
         guard let store, store.activeTask != nil, let projectID = store.currentProjectID else { awaySince = nil; return }
@@ -207,7 +210,7 @@ final class BackToWorkMonitor {
 
     deinit {
         timer?.invalidate()
-        if let observer { NSWorkspace.shared.notificationCenter.removeObserver(observer) }
+        NSWorkspace.shared.notificationCenter.removeObserver(self)
     }
 }
 #endif
